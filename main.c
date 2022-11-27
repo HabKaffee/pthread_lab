@@ -6,6 +6,15 @@
 const int lower_bound = 0;
 const int upper_bound = 2;
 
+struct args_for_threading {
+    double** result;
+    double** first;
+    double** second;
+    int n;
+    int m;
+    int k;
+};
+
 extern inline double get_random_double(double a, double b) {
     return a + (rand()/((double)RAND_MAX / (b-a)));
 }
@@ -63,7 +72,7 @@ void multiply_matrix_by_row(double** first_matrix,
 }
 
 void* multiply_matrix_by_row_parallel(void* thread) {
-    
+
 }
 
 int main() {
