@@ -1,0 +1,23 @@
+
+test case
+    first_matrix[0][0] = 0.990354;
+    first_matrix[0][1] = 0.947328;
+    first_matrix[0][2] = 0.513354;
+    first_matrix[1][0] = 0.649371;
+    first_matrix[1][1] = 1.595268;
+    first_matrix[1][2] = 1.784914;
+    first_matrix[2][0] = 1.322051; 
+    first_matrix[2][1] = 0.645861;
+    first_matrix[2][2] = 1.096336;
+
+    second_matrix[0][0] = 0.576092;
+    second_matrix[0][1] = 0.096401;
+    second_matrix[1][0] = 0.673040;
+    second_matrix[1][1] = 1.673355;
+    second_matrix[2][0] = 0.361154;
+    second_matrix[2][1] = 1.632181;
+    
+answer
+    1.393525	2.518574	
+    2.092405	5.645352	
+    1.592259	2.997621	
