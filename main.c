@@ -1,20 +1,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <stdbool.h>
+#include <math.h>
 #include <time.h>
 
 const int lower_bound = 0;
 const int upper_bound = 2;
+const double eps = 1e-6;
+long thread_count = 0;
 
 pthread_mutex_t mutex;
 
-long thread_count = 0;
-
 struct args_parallel {
     long thread_num;
-    double** result;
     double** first;
     double** second;
+    double** result;
     int n;
     int m;
     int k;
@@ -52,7 +54,6 @@ void init_random_matrix(double** matrix, int n, int m) {
 }
 
 void print_matrix(double** matrix, int n, int m) {
-    // print first matrix
     printf("%d x %d matrix\n", n, m);
     for (int i = 0; i < n; ++i) {
         for (int j = 0; j < m; ++j) {
@@ -77,6 +78,31 @@ void multiply_matrix_by_row(double** first_matrix,
     }
 }
 
+void* multiply_matrix_by_column_parallel(void* arguments) {
+    ARGS* args = (ARGS*) arguments;
+    // printf("%x\n", args);
+    long thread_num = args->thread_num;
+    // printf("Thread num %ld\n", thread_num);
+    long local_m = (args->m) / thread_count; // column division
+    // printf("local_m %ld\n", local_m);
+    long start_ind = thread_num * local_m;
+    // printf("start_ind %ld\n", start_ind);
+    long end_ind = (thread_num + 1) * local_m - 1;
+    // printf("end_ind %ld\n", end_ind);
+    if (thread_num == (thread_count - 1)) {
+        end_ind = (end_ind < (args->m - 1)) ? (args->m - 1) : end_ind;
+    }
+    for (int column = start_ind; column <= end_ind; ++column) {
+        for (int k = 0; k < args->k; ++k) {
+            for (int i = 0; i < args->n; ++i) {
+                pthread_mutex_lock(&mutex);
+                args->result[i][k] += args->first[i][column] * args->second[column][k];
+                pthread_mutex_unlock(&mutex);
+            }
+        }
+    }
+}
+
 void* multiply_matrix_by_row_parallel(void* arguments) {
     ARGS* args = (ARGS*) arguments;
     long thread_num = args->thread_num;
@@ -88,17 +114,52 @@ void* multiply_matrix_by_row_parallel(void* arguments) {
     }
     for (int i = start_ind; i <= end_ind; ++i) {
         for (int k = 0; k < args->k; ++k) {
-            args->result[i][k] = 0.0;
             for (int j = 0; j < args->m; ++j) {
-                pthread_mutex_lock(&mutex);
                 args->result[i][k] += args->first[i][j] * args->second[j][k];
-                pthread_mutex_unlock(&mutex);
             }
         }
     }
 }
 
+bool validate_result(double** first, double** second, int n, int m, double eps) {
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < m; ++j) {
+            if (fabs(first[i][j] - second[i][j]) > eps) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+ARGS* initialise_args_for_pthread(ARGS* args_array, double** first_mat, 
+                                  double** second_mat, double** result_mat, 
+                                  int n, int m, int k) {
+    args_array = malloc(sizeof(ARGS) * thread_count);
+
+    for (int i = 0; i < thread_count; ++i) {
+        args_array[i].thread_num = i;
+        args_array[i].first = first_mat;
+        args_array[i].second = second_mat;
+        args_array[i].result = &(&result_mat)[0][0];
+        args_array[i].n = n;
+        args_array[i].m = m;
+        args_array[i].k = k;
+    }
+    return args_array;
+}
+
+void uninitialise_args_for_pthread(ARGS* args_array) {
+    for (int i = 0; i < thread_count; ++i) {
+        args_array[i].first  = NULL;
+        args_array[i].second = NULL;
+        args_array[i].result = NULL;
+    }
+    free(args_array);
+}
+
 int main(int argc, char** argv) {
+    // Valid imput guards
     if (!argv[1]) {
         printf("Number of thread is needed\nNull is provided\n");
         exit(2);
@@ -106,36 +167,34 @@ int main(int argc, char** argv) {
         printf("Needed more than 0 threads, but %ld is provided\n", strtol(argv[1], NULL, 10));
         exit(3);
     }
+    srand(time(NULL));
+
     thread_count = strtol(argv[1], NULL, 10);
     pthread_t* thread_handles = malloc(thread_count * sizeof(pthread_t));
 
-    srand(time(NULL));
     double** first_matrix;
     double** second_matrix;
-    double** result_matrix;
-    
+    double** result_row_col_matrix;
+    double** result_col_row_matrix;
+    double** sequential_matrix;
+
     int n = 10, m = 5, k = 15;
 
     first_matrix = allocate_memory_for_matrix(first_matrix, n, m);
     second_matrix = allocate_memory_for_matrix(second_matrix, m, k);
-    result_matrix = allocate_memory_for_matrix(result_matrix, n, k);
+    result_row_col_matrix = allocate_memory_for_matrix(result_row_col_matrix, n, k);
+    result_col_row_matrix = allocate_memory_for_matrix(result_col_row_matrix, n, k);
+    sequential_matrix = allocate_memory_for_matrix(sequential_matrix, n, k);
 
     init_random_matrix(first_matrix, n, m);
     init_random_matrix(second_matrix, m, k);
     print_matrix(first_matrix, n, m);
     print_matrix(second_matrix, m, k);
     
-    ARGS* args_array = malloc(sizeof(ARGS) * thread_count);
-
-    for (int i = 0; i < thread_count; ++i) {
-        args_array[i].thread_num = i;
-        args_array[i].first = first_matrix;
-        args_array[i].second = second_matrix;
-        args_array[i].result = &*result_matrix;
-        args_array[i].n = n;
-        args_array[i].m = m;
-        args_array[i].k = k;
-    }
+    // Row by column multiplication in parallel
+    ARGS* args_array;
+    
+    args_array = initialise_args_for_pthread(args_array, first_matrix, second_matrix, result_row_col_matrix, n, m, k);
 
     pthread_mutex_init(&mutex, NULL);
 
@@ -145,17 +204,36 @@ int main(int argc, char** argv) {
     for (int i = 0; i < thread_count; ++i) {
         pthread_join(thread_handles[i], NULL);
     }
-    pthread_mutex_destroy(&mutex);
-    print_matrix(result_matrix, n, k);
+    
+    print_matrix(result_row_col_matrix, n, k);
 
-    multiply_matrix_by_row(first_matrix, second_matrix, result_matrix, n, m, k);
-    print_matrix(result_matrix, n, k);
+    // Column by row multiplication in parallel
+    args_array = initialise_args_for_pthread(args_array, first_matrix, second_matrix, result_col_row_matrix, n, m, k);
+
+    for (int i = 0; i < thread_count; ++i) {
+        pthread_create(&thread_handles[i], NULL, multiply_matrix_by_column_parallel, (void*) &args_array[i]);
+    }
+    for (int i = 0; i < thread_count; ++i) {
+        pthread_join(thread_handles[i], NULL);
+    }
+    
+    pthread_mutex_destroy(&mutex);
+    print_matrix(result_col_row_matrix, n, k);
+
+    // Sequential row by column multiplication
+    multiply_matrix_by_row(first_matrix, second_matrix, sequential_matrix, n, m, k);
+    print_matrix(sequential_matrix, n, k);
+    
+    printf("Row * col parallel = Sequential %s\n", validate_result(result_row_col_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
+    printf("Col * row parallel = Sequential %s\n", validate_result(result_col_row_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
+    uninitialise_args_for_pthread(args_array);
     
     deallocate_memory_for_matrix(first_matrix, n);
     deallocate_memory_for_matrix(second_matrix, m);
-    deallocate_memory_for_matrix(result_matrix, n);
+    deallocate_memory_for_matrix(result_col_row_matrix, n);
+    deallocate_memory_for_matrix(result_row_col_matrix, n);
+    deallocate_memory_for_matrix(sequential_matrix, n);
 
-    free(args_array);
     free(thread_handles);
     return 0;
 }
