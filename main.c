@@ -121,6 +121,22 @@ void* multiply_matrix_by_row_parallel(void* arguments) {
     }
 }
 
+void* multiply_matrix_by_block(void* arguments) {
+    ARGS* args = (ARGS*) arguments;
+    long thread_num = args->thread_num;
+    long local_n = (args->n) / thread_count;
+    long local_m = (args->m) / thread_count;
+    long local_k = (args->k) / thread_count;
+    long start_i = thread_num * local_n, end_i = (thread_num + 1) * local_n - 1;
+    long start_j = thread_num * local_m, end_j = (thread_num + 1) * local_m - 1;
+    for (int i = start_i; i <= end_i; ++i) {
+        // for ()
+            for (int j = start_j; j <= end_j; ++j) {
+
+            }
+    }
+}
+
 bool validate_result(double** first, double** second, int n, int m, double eps) {
     for (int i = 0; i < n; ++i) {
         for (int j = 0; j < m; ++j) {
