@@ -70,7 +70,6 @@ void multiply_matrix_by_row(double** first_matrix,
                                 int n, int m, int k) {
     for (int i = 0; i < n; ++i) {
         for (int l = 0; l < k; ++l) {
-            result_matrix[i][l] = 0.0;
             for (int j = 0; j < m; ++j) {
                 result_matrix[i][l] += first_matrix[i][j] * second_matrix[j][l];
             }
@@ -124,19 +123,40 @@ void* multiply_matrix_by_row_parallel(void* arguments) {
     }
 }
 
-void* multiply_matrix_by_block(void* arguments) {
+void* multiply_matrix_by_block_parallel(void* arguments) {
     ARGS* args = (ARGS*) arguments;
     long thread_num = args->thread_num;
-    long local_n = (args->n) / thread_count;
-    long local_m = (args->m) / thread_count;
-    long local_k = (args->k) / thread_count;
-    long start_i = thread_num * local_n, end_i = (thread_num + 1) * local_n - 1;
-    long start_j = thread_num * local_m, end_j = (thread_num + 1) * local_m - 1;
+    long local_n = (args->n);
+    long local_m = 0.25 * args->m;//(args->m)/thread_count;
+    long local_k = (args->k);
+    long start_i = (thread_num * local_n)%(args->n),
+         start_j = (thread_num * local_m)%(args->m),
+         start_k = (thread_num * local_k)%(args->k),
+         end_i   = start_i + local_n - 1,
+         end_j   = start_j + local_m - 1,
+         end_k   = start_k + local_k - 1;
+    if (thread_num == (thread_count - 1)) {
+        end_i = (end_i < (args->n - 1)) ? (args->n - 1) : end_i;
+        end_j = (end_j < (args->m - 1)) ? (args->m - 1) : end_j;
+        end_k = (end_k < (args->k - 1)) ? (args->k - 1) : end_k;
+    }
+    printf("local_n %ld\n \
+            local_m %ld\n \
+            local_k %ld\n \
+            start_i %ld\n \
+            start_j %ld\n \
+            end_i %ld\n \
+            end_j %ld\n \
+            start_k %ld end_k %ld\n", local_n, local_m, local_k, start_i, start_j, end_i, end_j, start_k, end_k);
     for (int i = start_i; i <= end_i; ++i) {
-        // for ()
+        for (int k = start_k; k <= end_k; ++k) {
             for (int j = start_j; j <= end_j; ++j) {
-
+                pthread_mutex_lock(&mutex);
+                args->result[i][k] += args->first[i][j] * args->second[j][k];
+                // args->result[i][k] /= thread_count;
+                pthread_mutex_unlock(&mutex);
             }
+        }
     }
 }
 
@@ -195,20 +215,22 @@ int main(int argc, char** argv) {
     double** second_matrix;
     double** result_row_col_matrix;
     double** result_col_row_matrix;
+    double** result_block_matrix;
     double** sequential_matrix;
 
-    int n = 1024, m = 512, k = 2048;
-
+    int n = 6, m = 6, k = 6;
+    // int n = 4096, m = 4096, k = 4096;
     first_matrix = allocate_memory_for_matrix(first_matrix, n, m);
     second_matrix = allocate_memory_for_matrix(second_matrix, m, k);
     result_row_col_matrix = allocate_memory_for_matrix(result_row_col_matrix, n, k);
     result_col_row_matrix = allocate_memory_for_matrix(result_col_row_matrix, n, k);
+    result_block_matrix = allocate_memory_for_matrix(result_block_matrix, n, k);
     sequential_matrix = allocate_memory_for_matrix(sequential_matrix, n, k);
 
     init_random_matrix(first_matrix, n, m);
     init_random_matrix(second_matrix, m, k);
-    //print_matrix(first_matrix, n, m);
-    //print_matrix(second_matrix, m, k);
+    // print_matrix(first_matrix, n, m);
+    // print_matrix(second_matrix, m, k);
     
     // Row by column multiplication in parallel
     ARGS* args_array;
@@ -223,8 +245,10 @@ int main(int argc, char** argv) {
     for (int i = 0; i < thread_count; ++i) {
         pthread_join(thread_handles[i], NULL);
     }
+
+    printf("Parallel row by column done\n");
     
-    //print_matrix(result_row_col_matrix, n, k);
+    // print_matrix(result_row_col_matrix, n, k);
 
     // Column by row multiplication in parallel
     args_array = initialise_args_for_pthread(args_array, first_matrix, second_matrix, result_col_row_matrix, n, m, k);
@@ -235,7 +259,19 @@ int main(int argc, char** argv) {
     for (int i = 0; i < thread_count; ++i) {
         pthread_join(thread_handles[i], NULL);
     }
-    
+    printf("Parallel column by row done\n");
+
+    // args_array = initialise_args_for_pthread(args_array, first_matrix, second_matrix, result_block_matrix, n, m, k);
+    // for (int i = 0; i < thread_count; ++i) {
+    //     pthread_create(&thread_handles[i], NULL, multiply_matrix_by_block_parallel, (void*) &args_array[i]);
+    // }
+    // for (int i = 0; i < thread_count; ++i) {
+    //     pthread_join(thread_handles[i], NULL);
+    // }
+    // printf("Parallel block multiplication done\n");
+
+    // print_matrix(result_block_matrix, n, k);
+
     pthread_mutex_destroy(&mutex);
     //print_matrix(result_col_row_matrix, n, k);
 
@@ -243,14 +279,16 @@ int main(int argc, char** argv) {
     multiply_matrix_by_row(first_matrix, second_matrix, sequential_matrix, n, m, k);
     //print_matrix(sequential_matrix, n, k);
     
-    printf("Row * col parallel = Sequential %s\n", validate_result(result_row_col_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
-    printf("Col * row parallel = Sequential %s\n", validate_result(result_col_row_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
+    printf("Row * col parallel = Sequential | %s\n", validate_result(result_row_col_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
+    printf("Col * row parallel = Sequential | %s\n", validate_result(result_col_row_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
+    // printf("  Block parallel   = Sequential | %s\n", validate_result(result_block_matrix, sequential_matrix, n, k, eps)   ? "true" : "false");
     uninitialise_args_for_pthread(args_array);
     
     deallocate_memory_for_matrix(first_matrix, n);
     deallocate_memory_for_matrix(second_matrix, m);
     deallocate_memory_for_matrix(result_col_row_matrix, n);
     deallocate_memory_for_matrix(result_row_col_matrix, n);
+    deallocate_memory_for_matrix(result_block_matrix, n);
     deallocate_memory_for_matrix(sequential_matrix, n);
 
     free(thread_handles);
