@@ -148,22 +148,19 @@ void* multiply_matrix_by_block_parallel(void* arguments) {
             --thread_rank;
         }
     }
-    printf("block_row_st = %ld, block_cos_st = %ld\nlocal_n = %ld, local_m = %ld\n", block_row_st, block_col_st, local_n, local_m);
+    // printf("block_row_st = %ld, block_cos_st = %ld\nlocal_n = %ld, local_m = %ld\n", block_row_st, block_col_st, local_n, local_m);
     int to_add = fmin(local_n, local_m);
-    pthread_mutex_lock(&mutex);
-    for (int block_i = 1; (block_i < args->n) && (block_i < args->m); block_i += to_add) {
-        printf("block_i = %d\n", block_i);
-        for (int i = block_row_st; i < args->n; i += block_i) {
-            // printf("i = %d\n", i);
-            for (int k = 0; k < args->k; k += block_i) {
-                for (int j = block_col_st; j < args->m; j += block_i) {
-                    args->result[i][k] += args->first[i][j] * args->second[j][k];
-                    // printf("res[%d][%d] = %lf\n", i, k, args->result[i][k]);
+    for (int block_i = 0; (block_i < args->n) && (block_i < args->k); block_i += to_add) {
+        for (int i = 0; (i < local_n) && (block_row_st + i < args->n); ++i) {
+            for (int k = 0; (k < local_m) && (block_col_st + k < args->k); ++k) {
+                pthread_mutex_lock(&mutex);
+                for (int j = 0; (j < local_n) && (j < local_m) && (block_i + j < args->n) && (block_i + j < args->k); ++j) {
+                    args->result[block_row_st + i][block_col_st + k] += args->first[block_row_st + i][block_i + j] * args->second[block_i + j][block_col_st + k];
                 }
+                pthread_mutex_unlock(&mutex);
             }
         }
     }
-    pthread_mutex_unlock(&mutex);
 }
 
 bool validate_result(double** first, double** second, int n, int m, double eps) {
@@ -263,7 +260,7 @@ int main(int argc, char** argv) {
         pthread_join(thread_handles[i], NULL);
     }
     double time_end_row = get_wall_time();
-    // printf("Parallel row by column done\n");
+    printf("Parallel row by column done\n");
     
     // print_matrix(result_row_col_matrix, n, k);
 
@@ -280,15 +277,17 @@ int main(int argc, char** argv) {
     printf("Parallel column by row done\n");
 
     args_array = initialise_args_for_pthread(args_array, first_matrix, second_matrix, result_block_matrix, n, m, k);
+    double time_st_block = get_wall_time();
     for (int i = 0; i < thread_count; ++i) {
         pthread_create(&thread_handles[i], NULL, multiply_matrix_by_block_parallel, (void*) &args_array[i]);
     }
     for (int i = 0; i < thread_count; ++i) {
         pthread_join(thread_handles[i], NULL);
     }
+    double time_end_block = get_wall_time();
     printf("Parallel block multiplication done\n");
 
-    print_matrix(result_block_matrix, n, k);
+    // print_matrix(result_block_matrix, n, k);
 
     pthread_mutex_destroy(&mutex);
     // print_matrix(result_col_row_matrix, n, k);
@@ -297,16 +296,15 @@ int main(int argc, char** argv) {
     double time_st_seq = get_wall_time();
     multiply_matrix_by_row(first_matrix, second_matrix, sequential_matrix, n, m, k);
     double time_end_seq = get_wall_time();
-    print_matrix(sequential_matrix, n, k);
+    // print_matrix(sequential_matrix, n, k);
     
-    printf("Row * col parallel = Sequential | %s\n", validate_result(result_row_col_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
-    printf("Col * row parallel = Sequential | %s\n", validate_result(result_col_row_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
-    printf("  Block parallel   = Sequential | %s\n", validate_result(result_block_matrix, sequential_matrix, n, k, eps)   ? "true" : "false");
-    // printf("%d x %d and %d x %d matrix multiplication with %ld threads\n", n, m, m, k, thread_count);
-    // printf("Seq = %lf\nRow parallel = %lf\nCol parallel = %lf\n", difftime(time_end_seq, time_start_seq), 
-    //                                                               difftime(time_end_row, time_start_row), 
-    //                                                               difftime(time_end_col, time_start_col));
-    // printf("Seq = %lf\nRow parallel = %lf\nCol parallel = %lf\n", time_end_seq-time_st_seq, time_end_row - time_st_row, time_end_col - time_st_col);
+    // printf("Row * col parallel = Sequential | %s\n", validate_result(result_row_col_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
+    // printf("Col * row parallel = Sequential | %s\n", validate_result(result_col_row_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
+    // printf("  Block parallel   = Sequential | %s\n", validate_result(result_block_matrix, sequential_matrix, n, k, eps)   ? "true" : "false");
+    printf("Seq = %lf\nRow parallel = %lf\nCol parallel = %lf\nBlock parallel = %lf", time_end_seq-time_st_seq, 
+                                                                                      time_end_row - time_st_row, 
+                                                                                      time_end_col - time_st_col,
+                                                                                      time_end_block - time_st_block);
     uninitialise_args_for_pthread(args_array);
     
     deallocate_memory_for_matrix(first_matrix, n);
