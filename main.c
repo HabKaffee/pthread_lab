@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <math.h>
 #include <time.h>
+#include <sys/time.h>
 
 const int lower_bound = 0;
 const int upper_bound = 2;
@@ -11,12 +12,6 @@ const double eps = 1e-6;
 long thread_count = 0;
 
 pthread_mutex_t mutex;
-time_t time_start_seq;
-time_t time_end_seq;
-time_t time_start_row;
-time_t time_end_row;
-time_t time_start_col;
-time_t time_end_col;
 
 
 struct args_parallel {
@@ -160,10 +155,10 @@ void* multiply_matrix_by_block_parallel(void* arguments) {
         printf("block_i = %d\n", block_i);
         for (int i = block_row_st; i < args->n; i += block_i) {
             // printf("i = %d\n", i);
-            for (int k = 0; k < args->k; ++k) {
+            for (int k = 0; k < args->k; k += block_i) {
                 for (int j = block_col_st; j < args->m; j += block_i) {
                     args->result[i][k] += args->first[i][j] * args->second[j][k];
-                    printf("res[%d][%d] = %lf\n", i, k, args->result[i][k]);
+                    // printf("res[%d][%d] = %lf\n", i, k, args->result[i][k]);
                 }
             }
         }
@@ -208,6 +203,12 @@ void uninitialise_args_for_pthread(ARGS* args_array) {
     free(args_array);
 }
 
+double get_wall_time() {
+    struct timeval time;
+    gettimeofday(&time, NULL);
+    return (double)time.tv_sec + (double)time.tv_usec * .000001;
+}
+
 int main(int argc, char** argv) {
     // Valid imput guards
     if (!argv[1]) {
@@ -220,6 +221,12 @@ int main(int argc, char** argv) {
     srand(time(NULL));
 
     thread_count = strtol(argv[1], NULL, 10);
+    long n = 100, m = 100, k = 100;
+    if (argv[2] && argv[3] && argv[4]) {
+        n = strtol(argv[2], NULL, 10);
+        m = strtol(argv[3], NULL, 10);
+        k = strtol(argv[4], NULL, 10);
+    }
     pthread_t* thread_handles = malloc(thread_count * sizeof(pthread_t));
 
     double** first_matrix;
@@ -229,7 +236,6 @@ int main(int argc, char** argv) {
     double** result_block_matrix;
     double** sequential_matrix;
 
-    int n = 4, m = 4, k = 4;
     // int n = 4096, m = 4096, k = 4096;
     first_matrix = allocate_memory_for_matrix(first_matrix, n, m);
     second_matrix = allocate_memory_for_matrix(second_matrix, m, k);
@@ -249,28 +255,28 @@ int main(int argc, char** argv) {
     args_array = initialise_args_for_pthread(args_array, first_matrix, second_matrix, result_row_col_matrix, n, m, k);
 
     pthread_mutex_init(&mutex, NULL);
-    time(&time_start_row);
+    double time_st_row = get_wall_time();
     for (int i = 0; i < thread_count; ++i) {
         pthread_create(&thread_handles[i], NULL, multiply_matrix_by_row_parallel, (void*) &args_array[i]);
     }
     for (int i = 0; i < thread_count; ++i) {
         pthread_join(thread_handles[i], NULL);
     }
-    time(&time_end_row);
-    printf("Parallel row by column done\n");
+    double time_end_row = get_wall_time();
+    // printf("Parallel row by column done\n");
     
     // print_matrix(result_row_col_matrix, n, k);
 
     // Column by row multiplication in parallel
     args_array = initialise_args_for_pthread(args_array, first_matrix, second_matrix, result_col_row_matrix, n, m, k);
-    time(&time_start_col);
+    double time_st_col = get_wall_time();
     for (int i = 0; i < thread_count; ++i) {
         pthread_create(&thread_handles[i], NULL, multiply_matrix_by_column_parallel, (void*) &args_array[i]);
     }
     for (int i = 0; i < thread_count; ++i) {
         pthread_join(thread_handles[i], NULL);
     }
-    time(&time_end_col);
+    double time_end_col = get_wall_time();
     printf("Parallel column by row done\n");
 
     args_array = initialise_args_for_pthread(args_array, first_matrix, second_matrix, result_block_matrix, n, m, k);
@@ -288,16 +294,19 @@ int main(int argc, char** argv) {
     // print_matrix(result_col_row_matrix, n, k);
 
     // Sequential row by column multiplication
-    time(&time_start_seq);
+    double time_st_seq = get_wall_time();
     multiply_matrix_by_row(first_matrix, second_matrix, sequential_matrix, n, m, k);
-    time(&time_end_seq);
+    double time_end_seq = get_wall_time();
     print_matrix(sequential_matrix, n, k);
     
     printf("Row * col parallel = Sequential | %s\n", validate_result(result_row_col_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
     printf("Col * row parallel = Sequential | %s\n", validate_result(result_col_row_matrix, sequential_matrix, n, k, eps) ? "true" : "false");
-
-    printf("Seq = %ld\nRow parallel = %ld\nCol parallel = %ld\n", time_end_seq - time_start_seq, time_end_row - time_start_row, time_end_col - time_start_col);
     printf("  Block parallel   = Sequential | %s\n", validate_result(result_block_matrix, sequential_matrix, n, k, eps)   ? "true" : "false");
+    // printf("%d x %d and %d x %d matrix multiplication with %ld threads\n", n, m, m, k, thread_count);
+    // printf("Seq = %lf\nRow parallel = %lf\nCol parallel = %lf\n", difftime(time_end_seq, time_start_seq), 
+    //                                                               difftime(time_end_row, time_start_row), 
+    //                                                               difftime(time_end_col, time_start_col));
+    // printf("Seq = %lf\nRow parallel = %lf\nCol parallel = %lf\n", time_end_seq-time_st_seq, time_end_row - time_st_row, time_end_col - time_st_col);
     uninitialise_args_for_pthread(args_array);
     
     deallocate_memory_for_matrix(first_matrix, n);
